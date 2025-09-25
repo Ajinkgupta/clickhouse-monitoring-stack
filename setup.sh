@@ -261,7 +261,12 @@ curl -s -u "admin:${GRAFANA_ADMIN_PASS}" \
      -d '{"name":"Prometheus","type":"prometheus","url":"http://localhost:9090","access":"proxy","isDefault":true}' \
      http://localhost:3000/api/datasources | jq
 echo -e "${GREEN}Prometheus datasource added to Grafana.${NC}"
+echo -e "\n${BLUE}--- Securing the 'default' user ---${NC}"
 
+# This command finds the <ip>::/0</ip> line and replaces it with the correct localhost IPs
+sudo sed -i 's|<ip>::/0</ip>|<ip>::1</ip>\n            <ip>127.0.0.1</ip>|' /etc/clickhouse-server/users.xml
+
+echo -e "${GREEN}'default' user has been secured.${NC}"
 ## -------------------------------------------------------------------------- ##
 echo -e "\n${YELLOW}=== Step 6/6: Final Summary ===${NC}"
 ## -------------------------------------------------------------------------- ##
