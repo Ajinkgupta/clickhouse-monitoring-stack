@@ -28,7 +28,7 @@ Follow these steps to get your monitoring stack running.
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/Ajinkgupta/clickhouse-monitoring-stack.git](https://github.com/Ajinkgupta/clickhouse-monitoring-stack.git)
+    git clone https://github.com/Ajinkgupta/clickhouse-monitoring-stack.git 
     ```
 
 2.  **Navigate into the directory:**
