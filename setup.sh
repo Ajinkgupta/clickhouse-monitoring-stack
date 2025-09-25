@@ -72,15 +72,55 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y clickhouse-server clickhouse-client
 echo -e "${GREEN}ClickHouse installed successfully.${NC}"
 
-# Configure ClickHouse to listen on all interfaces
-tee /etc/clickhouse-server/config.d/listen.xml > /dev/null <<EOF
+# FIXED: Configure ClickHouse step-by-step to avoid startup conflicts
+# Clean up any existing configs first
+rm -rf /etc/clickhouse-server/config.d/*
+rm -rf /etc/clickhouse-server/users.d/*
+
+# Backup the original config
+cp /etc/clickhouse-server/config.xml /etc/clickhouse-server/config.xml.backup
+
+# Step 1: Configure external access in main config
+echo -e "${BLUE}Configuring ClickHouse for external access...${NC}"
+sed -i 's/<!-- <listen_host>0.0.0.0<\/listen_host> -->/<listen_host>0.0.0.0<\/listen_host>/' /etc/clickhouse-server/config.xml
+
+# Test restart with basic config
+systemctl restart clickhouse-server
+sleep 3
+if ! systemctl is-active --quiet clickhouse-server; then
+    echo -e "${RED}Error: ClickHouse failed to start with external access config.${NC}"
+    journalctl -u clickhouse-server --no-pager -n 20
+    exit 1
+fi
+echo -e "${GREEN}External access configured successfully.${NC}"
+
+# Step 2: Add Prometheus configuration
+echo -e "${BLUE}Adding Prometheus metrics endpoint...${NC}"
+tee /etc/clickhouse-server/config.d/prometheus.xml > /dev/null <<EOF
 <clickhouse>
-    <listen_host>0.0.0.0</listen_host>
-    <listen_host>::</listen_host>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <status_info>true</status_info>
+    </prometheus>
 </clickhouse>
 EOF
 
-# Create a secure user with the provided password
+# Test restart with Prometheus config
+systemctl restart clickhouse-server
+sleep 3
+if ! systemctl is-active --quiet clickhouse-server; then
+    echo -e "${RED}Error: ClickHouse failed to start with Prometheus config.${NC}"
+    journalctl -u clickhouse-server --no-pager -n 20
+    exit 1
+fi
+echo -e "${GREEN}Prometheus exporter enabled on port 9363.${NC}"
+
+# Step 3: Add custom user configuration
+echo -e "${BLUE}Creating custom ClickHouse user '${CLICKHOUSE_USER}'...${NC}"
 PASSWORD_HASH=$(echo -n "$CLICKHOUSE_PASSWORD" | sha256sum | tr -d ' -')
 tee /etc/clickhouse-server/users.d/admin-user.xml > /dev/null <<EOF
 <clickhouse>
@@ -97,31 +137,28 @@ tee /etc/clickhouse-server/users.d/admin-user.xml > /dev/null <<EOF
     </users>
 </clickhouse>
 EOF
-echo -e "${GREEN}ClickHouse user '${CLICKHOUSE_USER}' configured.${NC}"
 
-# Enable the built-in Prometheus exporter
-tee /etc/clickhouse-server/config.d/prometheus.xml > /dev/null <<EOF
-<clickhouse>
-    <prometheus>
-        <endpoint>/metrics</endpoint>
-        <port>9363</port>
-        <metrics>true</metrics>
-        <events>true</events>
-        <asynchronous_metrics>true</asynchronous_metrics>
-    </prometheus>
-</clickhouse>
-EOF
-echo -e "${GREEN}ClickHouse Prometheus exporter enabled on port 9363.${NC}"
-
-# Restart and verify ClickHouse
+# Final restart and verification
 systemctl restart clickhouse-server
 sleep 5
 if ! systemctl is-active --quiet clickhouse-server; then
-    echo -e "${RED}Error: ClickHouse server failed to start.${NC}"
-    journalctl -u clickhouse-server --no-pager
-    exit 1
+    echo -e "${RED}Error: ClickHouse failed to start with user config.${NC}"
+    echo -e "${YELLOW}Trying to recover by removing user config...${NC}"
+    rm -f /etc/clickhouse-server/users.d/admin-user.xml
+    systemctl restart clickhouse-server
+    sleep 3
+    if systemctl is-active --quiet clickhouse-server; then
+        echo -e "${YELLOW}ClickHouse recovered without custom user. You can use default user.${NC}"
+    else
+        echo -e "${RED}Failed to recover ClickHouse. Check logs manually.${NC}"
+        journalctl -u clickhouse-server --no-pager -n 30
+        exit 1
+    fi
+else
+    echo -e "${GREEN}ClickHouse user '${CLICKHOUSE_USER}' configured successfully.${NC}"
 fi
-echo -e "${GREEN}ClickHouse server is running.${NC}"
+
+echo -e "${GREEN}ClickHouse server is running with all configurations.${NC}"
 
 ## -------------------------------------------------------------------------- ##
 echo -e "\n${YELLOW}=== Step 4/6: Installing and Configuring Prometheus ===${NC}"
